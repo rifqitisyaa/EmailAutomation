@@ -15,7 +15,6 @@ public class ReportJobConfig
     public string ReportTitle { get; set; } = string.Empty;
     public string CronExpression { get; set; } = string.Empty;
     public EmailJobSettings Email { get; set; } = new();
-
     public bool IsActive { get; set; }
 }
 
