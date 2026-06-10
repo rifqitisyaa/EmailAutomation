@@ -1,9 +1,9 @@
-using Cronos;
 using EmailAutomation.Models;
 using EmailAutomation.Services;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Cronos;
 
 namespace EmailAutomation.Workers;
 
@@ -11,20 +11,26 @@ public class EmailReportWorker : BackgroundService
 {
     private readonly ILogger<EmailReportWorker> _logger;
     private readonly IEmailService _emailService;
-    private readonly IPdfScannerService _pdfScannerService;
+    private readonly IReportDataService _reportDataService;
+    private readonly IHtmlTemplateService _htmlTemplateService;
+    private readonly IPdfGeneratorService _pdfGeneratorService;
     private readonly IHostApplicationLifetime _hostApplicationLifetime;
     private readonly EmailReportOptions _options;
 
     public EmailReportWorker(
         ILogger<EmailReportWorker> logger,
         IEmailService emailService,
-        IPdfScannerService pdfScannerService,
+        IReportDataService reportDataService,
+        IHtmlTemplateService htmlTemplateService,
+        IPdfGeneratorService pdfGeneratorService,
         IHostApplicationLifetime hostApplicationLifetime,
         IOptions<EmailReportOptions> options)
     {
         _logger = logger;
         _emailService = emailService;
-        _pdfScannerService = pdfScannerService;
+        _reportDataService = reportDataService;
+        _htmlTemplateService = htmlTemplateService;
+        _pdfGeneratorService = pdfGeneratorService;
         _hostApplicationLifetime = hostApplicationLifetime;
         _options = options.Value;
     }
@@ -33,95 +39,94 @@ public class EmailReportWorker : BackgroundService
     {
         if (_options.RunOnce)
         {
-            _logger.LogInformation("RunOnce is enabled. Executing job immediately.");
-            await DoWorkAsync(stoppingToken);
-            _logger.LogInformation("Job completed. Stopping application.");
+            _logger.LogInformation("RunOnce is enabled. Executing all jobs immediately.");
+            await ProcessAllJobsAsync(stoppingToken);
+            _logger.LogInformation("All jobs completed. Stopping application.");
             _hostApplicationLifetime.StopApplication();
             return;
         }
 
-        var cron = CronExpression.Parse(_options.CronExpression);
-        _logger.LogInformation("Cron mode enabled. Schedule: {CronExpression}", _options.CronExpression);
+        _logger.LogInformation("Multi-Job Cron mode enabled. Monitoring {Count} jobs.", _options.Jobs.Count);
 
-        while (!stoppingToken.IsCancellationRequested)
+        // Dictionary untuk melacak waktu eksekusi berikutnya tiap job
+        var nextOccurrences = new Dictionary<string, DateTimeOffset>();
+        
+        foreach (var job in _options.Jobs)
         {
+            var cron = CronExpression.Parse(job.CronExpression);
             var next = cron.GetNextOccurrence(DateTimeOffset.Now, TimeZoneInfo.Local);
             if (next.HasValue)
             {
-                var delay = next.Value - DateTimeOffset.Now;
-                if (delay.TotalMilliseconds > 0)
-                {
-                    _logger.LogInformation("Next execution scheduled at: {NextOccurrence}", next.Value);
-                    await Task.Delay(delay, stoppingToken);
-                }
+                nextOccurrences[job.JobName] = next.Value;
+                _logger.LogInformation("Job [{JobName}] scheduled at: {Next}", job.JobName, next.Value);
+            }
+        }
 
-                await DoWorkAsync(stoppingToken);
-            }
-            else
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            var now = DateTimeOffset.Now;
+            
+            foreach (var job in _options.Jobs)
             {
-                _logger.LogWarning("No more occurrences for the cron expression. Stopping worker.");
-                break;
+                if (nextOccurrences.TryGetValue(job.JobName, out var next) && now >= next)
+                {
+                    _logger.LogInformation("Executing scheduled job: {JobName}", job.JobName);
+                    await DoWorkForJobAsync(job, stoppingToken);
+
+                    // Update waktu eksekusi berikutnya
+                    var cron = CronExpression.Parse(job.CronExpression);
+                    var newNext = cron.GetNextOccurrence(DateTimeOffset.Now, TimeZoneInfo.Local);
+                    if (newNext.HasValue)
+                    {
+                        nextOccurrences[job.JobName] = newNext.Value;
+                        _logger.LogInformation("Job [{JobName}] next schedule: {Next}", job.JobName, newNext.Value);
+                    }
+                }
             }
+
+            await Task.Delay(10000, stoppingToken); // Cek tiap 10 detik
         }
     }
 
-    private async Task DoWorkAsync(CancellationToken stoppingToken)
+    private async Task ProcessAllJobsAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("Email report job started at: {Time}", DateTimeOffset.Now);
+        foreach (var job in _options.Jobs)
+        {
+            await DoWorkForJobAsync(job, stoppingToken);
+        }
+    }
 
+    private async Task DoWorkForJobAsync(ReportJobConfig job, CancellationToken stoppingToken)
+    {
         try
         {
-            var files = _pdfScannerService.ScanForPdfFiles(_options.PdfFolderPath).ToList();
+            _logger.LogInformation("--- Starting Job: {JobName} ---", job.JobName);
 
-            if (!files.Any())
+            // 1. Get Data
+            var reportDate = DateTime.Today;
+            var reportData = await _reportDataService.GetReportDataAsync(job, reportDate);
+
+            if (reportData.Rows.Count == 0)
             {
-                _logger.LogWarning("No PDF files found in {Path}. Skipping email.", _options.PdfFolderPath);
+                _logger.LogWarning("Job [{JobName}]: No data found. Skipping.", job.JobName);
                 return;
             }
 
-            await _emailService.SendEmailWithAttachmentsAsync(_options.Email, files);
+            // 2. Build HTML
+            var html = _htmlTemplateService.BuildHtml(reportData);
 
-            if (_options.MoveAfterSend)
-            {
-                ArchiveFiles(files);
-            }
+            // 3. Generate PDF
+            var pdfBytes = await _pdfGeneratorService.GeneratePdfAsync(html);
+
+            // 4. Send Email
+            var attachmentFileName = $"{job.JobName}_{reportDate:yyyyMMdd}.pdf";
+            await _emailService.SendJobEmailAsync(job, pdfBytes, attachmentFileName);
+
+            _logger.LogInformation("--- Job {JobName} Completed Successfully ---", job.JobName);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "An error occurred during the email report job execution.");
-        }
-
-        _logger.LogInformation("Email report job finished at: {Time}", DateTimeOffset.Now);
-    }
-
-    private void ArchiveFiles(IEnumerable<FileInfo> files)
-    {
-        if (!Directory.Exists(_options.ArchiveFolderPath))
-        {
-            Directory.CreateDirectory(_options.ArchiveFolderPath);
-            _logger.LogInformation("Created archive folder: {Path}", _options.ArchiveFolderPath);
-        }
-
-        foreach (var file in files)
-        {
-            try
-            {
-                var destination = Path.Combine(_options.ArchiveFolderPath, file.Name);
-                
-                // Handle filename collision
-                if (File.Exists(destination))
-                {
-                    var timestamp = DateTime.Now.ToString("yyyyMMddHHmmss");
-                    destination = Path.Combine(_options.ArchiveFolderPath, $"{Path.GetFileNameWithoutExtension(file.Name)}_{timestamp}{file.Extension}");
-                }
-
-                file.MoveTo(destination);
-                _logger.LogInformation("Moved file {FileName} to archive", file.Name);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to move file {FileName} to archive", file.Name);
-            }
+            _logger.LogError(ex, "Error processing job: {JobName}", job.JobName);
         }
     }
 }

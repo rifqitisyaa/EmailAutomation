@@ -22,6 +22,9 @@ builder.Logging.AddSerilog();
 builder.Services.Configure<EmailReportOptions>(
     builder.Configuration.GetSection(EmailReportOptions.SectionName));
 
+builder.Services.Configure<GlobalEmailConfig>(
+    builder.Configuration.GetSection(GlobalEmailConfig.SectionName));
+
 // Override RunOnce if --run-once flag is present
 if (args.Contains("--run-once"))
 {
@@ -32,15 +35,19 @@ if (args.Contains("--run-once"))
 }
 
 // Register Services
-builder.Services.AddSingleton<IPdfScannerService, PdfScannerService>();
+builder.Services.AddSingleton<IReportDataService, ReportDataService>();
+builder.Services.AddSingleton<IHtmlTemplateService, HtmlTemplateService>();
+builder.Services.AddSingleton<IPdfGeneratorService, PdfGeneratorService>();
 builder.Services.AddSingleton<IEmailService, EmailService>();
+
+// Register Worker
 builder.Services.AddHostedService<EmailReportWorker>();
 
 var host = builder.Build();
 
 try
 {
-    Log.Information("Starting EmailAutomation host...");
+    Log.Information("Starting EmailAutomation host with Multi-Job support...");
     await host.RunAsync();
 }
 catch (Exception ex)

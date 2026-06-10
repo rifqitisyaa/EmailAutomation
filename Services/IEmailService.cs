@@ -4,5 +4,5 @@ namespace EmailAutomation.Services;
 
 public interface IEmailService
 {
-    Task SendEmailWithAttachmentsAsync(EmailSettings settings, IEnumerable<FileInfo> attachments);
+    Task SendJobEmailAsync(ReportJobConfig jobConfig, byte[] pdfBytes, string attachmentFileName);
 }
