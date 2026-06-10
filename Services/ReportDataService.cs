@@ -21,8 +21,6 @@ public class ReportDataService : IReportDataService
         var startYear = (reportDate.Year - 3).ToString(); // Contoh dinamis 2023
         var endYear = reportDate.Year.ToString();        // Contoh dinamis 2026
 
-        
-
         var reportData = new ReportData
         {
             ReportDate = reportDate,

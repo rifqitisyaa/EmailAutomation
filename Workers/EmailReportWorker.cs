@@ -3,10 +3,10 @@ using EmailAutomation.Services;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Microsoft.Extensions.DependencyInjection; // WAJIB TAMBAHKAN INI
+using Microsoft.Extensions.DependencyInjection;
 using Cronos;
-using EmailAutomation.Data;
 using Microsoft.EntityFrameworkCore;
+using EmailAutomation.Data;
 
 namespace EmailAutomation.Workers;
 
@@ -14,13 +14,13 @@ public class EmailReportWorker : BackgroundService
 {
     private readonly ILogger<EmailReportWorker> _logger;
     private readonly IHostApplicationLifetime _hostApplicationLifetime;
-    private readonly IServiceScopeFactory _scopeFactory; // <--- 1. Inject ini untuk handle Scoped service
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly EmailReportOptions _options;
 
     public EmailReportWorker(
         ILogger<EmailReportWorker> logger,
         IHostApplicationLifetime hostApplicationLifetime,
-        IServiceScopeFactory scopeFactory, // <--- Ganti service lama dengan ini
+        IServiceScopeFactory scopeFactory,
         IOptions<EmailReportOptions> options)
     {
         _logger = logger;
@@ -29,9 +29,11 @@ public class EmailReportWorker : BackgroundService
         _options = options.Value;
     }
 
+    // NEW: record buat nyimpen hasil generate PDF per job
+    private record JobPdfResult(ReportJobConfig Job, byte[] PdfBytes, string FileName);
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // JIKA RUN ONCE DIAKTIFKAN
         if (_options.RunOnce)
         {
             _logger.LogInformation("RunOnce is enabled. Executing all active jobs from database immediately.");
@@ -43,7 +45,6 @@ public class EmailReportWorker : BackgroundService
 
         _logger.LogInformation("Multi-Job Cron mode enabled. Monitoring jobs dynamically from Database.");
 
-        // Dictionary untuk melacak waktu eksekusi berikutnya tiap job
         var nextOccurrences = new Dictionary<string, DateTimeOffset>();
 
         while (!stoppingToken.IsCancellationRequested)
@@ -52,17 +53,13 @@ public class EmailReportWorker : BackgroundService
 
             try
             {
-                // 2. Bikin scope tiap looping buat baca list job paling up-to-date dari DB
                 using (var scope = _scopeFactory.CreateScope())
                 {
                     var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-
-                    // Ambil list job aktif langsung dari tabel database
                     var activeJobs = await dbContext.ReportJobConfigs.Where(j => j.IsActive).ToListAsync(stoppingToken);
 
                     foreach (var job in activeJobs)
                     {
-                        // Jika job baru ditambah ke DB dan belum ada di tracking dictionary, hitung schedule-nya
                         if (!nextOccurrences.ContainsKey(job.JobName))
                         {
                             var cron = CronExpression.Parse(job.CronExpression);
@@ -73,16 +70,22 @@ public class EmailReportWorker : BackgroundService
                                 _logger.LogInformation("Job [{JobName}] dynamic schedule registered at: {Next}", job.JobName, next.Value);
                             }
                         }
+                    }
 
-                        // Cek apakah sudah masuk waktunya dieksekusi
-                        if (nextOccurrences.TryGetValue(job.JobName, out var nextExecution) && now >= nextExecution)
+                    // CHANGED: kumpulkan dulu semua job yang sudah waktunya
+                    var jobsToRun = activeJobs
+                        .Where(job => nextOccurrences.TryGetValue(job.JobName, out var nextExec) && now >= nextExec)
+                        .ToList();
+
+                    // CHANGED: kalau ada yang perlu jalan, proses sekaligus (untuk grouping email)
+                    if (jobsToRun.Any())
+                    {
+                        _logger.LogInformation("Running {Count} scheduled job(s).", jobsToRun.Count);
+                        await ProcessJobGroupAsync(scope, jobsToRun, stoppingToken);
+
+                        // Update next schedule semua job yang baru jalan
+                        foreach (var job in jobsToRun)
                         {
-                            _logger.LogInformation("Executing scheduled job from DB: {JobName}", job.JobName);
-
-                            // Eksekusi job pakai scope yang ada
-                            await DoWorkForJobAsync(scope, job, stoppingToken);
-
-                            // Update waktu eksekusi berikutnya
                             var cron = CronExpression.Parse(job.CronExpression);
                             var newNext = cron.GetNextOccurrence(DateTimeOffset.Now, TimeZoneInfo.Local);
                             if (newNext.HasValue)
@@ -99,62 +102,101 @@ public class EmailReportWorker : BackgroundService
                 _logger.LogError(ex, "Error during jobs monitoring cycle.");
             }
 
-            await Task.Delay(10000, stoppingToken); // Cek tiap 10 detik
+            await Task.Delay(10000, stoppingToken);
         }
     }
 
+    // CHANGED: sekarang pakai ProcessJobGroupAsync
     private async Task ProcessAllJobsAsync(CancellationToken stoppingToken)
     {
-        using (var scope = _scopeFactory.CreateScope())
-        {
-            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var activeJobs = await dbContext.ReportJobConfigs.Where(j => j.IsActive).ToListAsync(stoppingToken);
+        using var scope = _scopeFactory.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var activeJobs = await dbContext.ReportJobConfigs
+            .Where(j => j.IsActive).ToListAsync(stoppingToken);
 
-            foreach (var job in activeJobs)
-            {
-                await DoWorkForJobAsync(scope, job, stoppingToken);
-            }
+        await ProcessJobGroupAsync(scope, activeJobs, stoppingToken);
+    }
+
+    // NEW: inti logika grouping — generate semua PDF dulu, baru group by email, baru kirim
+    private async Task ProcessJobGroupAsync(
+        IServiceScope scope,
+        List<ReportJobConfig> jobs,
+        CancellationToken stoppingToken)
+    {
+        var results = new List<JobPdfResult>();
+
+        // Pass 1: generate PDF untuk semua job
+        foreach (var job in jobs)
+        {
+            var result = await GeneratePdfForJobAsync(scope, job, stoppingToken);
+            if (result != null)
+                results.Add(result);
+        }
+
+        if (!results.Any()) return;
+
+        // Pass 2: group by recipients, kirim 1 email per group
+        var grouped = results.GroupBy(r => NormalizeRecipients(r.Job));
+        var emailService = scope.ServiceProvider.GetRequiredService<IEmailService>();
+
+        foreach (var group in grouped)
+        {
+            var attachments = group
+                .Select(r => (r.PdfBytes, r.FileName))
+                .ToList();
+
+            _logger.LogInformation(
+                "Sending grouped email to [{Recipients}] with {Count} attachment(s): {Files}",
+                group.Key,
+                attachments.Count,
+                string.Join(", ", group.Select(r => r.FileName)));
+
+            await emailService.SendGroupedEmailAsync(group.First().Job, attachments);
         }
     }
 
-    // 3. Modifikasi method ini agar menerima 'IServiceScope' untuk me-resolve service scoped secara aman
-    private async Task DoWorkForJobAsync(IServiceScope scope, ReportJobConfig job, CancellationToken stoppingToken)
+    private static string NormalizeRecipients(ReportJobConfig job)
+    {
+        return string.Join(",",
+            job.ToAddresses
+                .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(e => e.Trim().ToLowerInvariant())
+                .OrderBy(e => e));
+    }
+
+    // CHANGED: dulu DoWorkForJobAsync, sekarang dipecah jadi ini (hanya generate PDF, tidak kirim email)
+    private async Task<JobPdfResult?> GeneratePdfForJobAsync(
+        IServiceScope scope,
+        ReportJobConfig job,
+        CancellationToken stoppingToken)
     {
         try
         {
-            _logger.LogInformation("--- Starting Job: {JobName} ---", job.JobName);
+            _logger.LogInformation("--- Generating PDF for Job: {JobName} ---", job.JobName);
 
-            // Resolve service di dalam lingkup scope per-job
             var reportDataService = scope.ServiceProvider.GetRequiredService<IReportDataService>();
             var htmlTemplateService = scope.ServiceProvider.GetRequiredService<IHtmlTemplateService>();
             var pdfGeneratorService = scope.ServiceProvider.GetRequiredService<IPdfGeneratorService>();
-            var emailService = scope.ServiceProvider.GetRequiredService<IEmailService>();
 
-            // 1. Get Data via Stored Procedure dinamis yang ada di service lu
             var reportDate = DateTime.Today;
             var reportData = await reportDataService.GetReportDataAsync(job, reportDate);
 
             if (reportData == null || reportData.Rows.Count == 0)
             {
                 _logger.LogWarning("Job [{JobName}]: No data found. Skipping.", job.JobName);
-                return;
+                return null;
             }
 
-            // 2. Build HTML
             var html = htmlTemplateService.BuildHtml(reportData);
-
-            // 3. Generate PDF
             var pdfBytes = await pdfGeneratorService.GeneratePdfAsync(html);
+            var fileName = $"{job.JobName}_{reportDate:yyyyMMdd}.pdf";
 
-            // 4. Send Email
-            var attachmentFileName = $"{job.JobName}_{reportDate:yyyyMMdd}.pdf";
-            await emailService.SendJobEmailAsync(job, pdfBytes, attachmentFileName);
-
-            _logger.LogInformation("--- Job {JobName} Completed Successfully ---", job.JobName);
+            return new JobPdfResult(job, pdfBytes, fileName);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error processing job: {JobName}", job.JobName);
+            _logger.LogError(ex, "Error generating PDF for job: {JobName}", job.JobName);
+            return null;
         }
     }
 }

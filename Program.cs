@@ -1,4 +1,3 @@
-using EmailAutomation.Data; // Tambahkan namespace AppDbContext lu
 using EmailAutomation.Models;
 using EmailAutomation.Services;
 using EmailAutomation.Workers;
@@ -7,6 +6,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using EmailAutomation.Data; // Tambahkan ini untuk AppDbContext
 using Serilog;
 
 var builder = Host.CreateApplicationBuilder(args);

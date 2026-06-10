@@ -1,3 +1,6 @@
+using Microsoft.EntityFrameworkCore;
+using System.ComponentModel.DataAnnotations;
+
 namespace EmailAutomation.Models;
 
 public class EmailReportOptions
@@ -10,20 +13,23 @@ public class EmailReportOptions
 
 public class ReportJobConfig
 {
+    [Key]
+    public int Id { get; set; }
+
     public string JobName { get; set; } = string.Empty;
     public string SpName { get; set; } = string.Empty;
     public string ReportTitle { get; set; } = string.Empty;
     public string CronExpression { get; set; } = string.Empty;
-    public EmailJobSettings Email { get; set; } = new();
+    public string ToAddresses { get; set; }
+    public string CcAddresses { get; set; }
+    public string Subject { get; set; } = string.Empty;
+    public string Body { get; set; } = string.Empty;
     public bool IsActive { get; set; }
 }
 
 public class EmailJobSettings
 {
-    public string[] ToAddresses { get; set; } = Array.Empty<string>();
-    public string[] CcAddresses { get; set; } = Array.Empty<string>();
-    public string Subject { get; set; } = string.Empty;
-    public string Body { get; set; } = string.Empty;
+
 }
 
 public class GlobalEmailConfig
