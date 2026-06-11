@@ -55,3 +55,15 @@ public class ReportData
     public List<string> Columns { get; set; } = new();
     public List<Dictionary<string, object?>> Rows { get; set; } = new();
 }
+
+public class EmailAutomationLog
+{
+    public int Id { get; set; }
+    public DateTime Timestamp { get; set; } = DateTime.Now;
+    public string? Level { get; set; } // INFO, ERROR, WARN
+    public string? JobName { get; set; }
+    public string? Message { get; set; }
+    public string? Exception { get; set; }
+    public string? CommandText { get; set; } // Buat simpan SQL/SP yang running
+    public string? Parameters { get; set; }
+}

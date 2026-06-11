@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using EmailAutomation.Data; // Tambahkan ini untuk AppDbContext
+using EmailAutomation.Services.Interceptors;
 using Serilog;
 
 var builder = Host.CreateApplicationBuilder(args);
@@ -39,7 +40,10 @@ string connectionString = builder.Configuration.GetConnectionString("DefaultConn
     ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
 
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlServer(connectionString));
+{
+    options.UseSqlServer(connectionString);
+    options.AddInterceptors(new DbLoggingInterceptor());
+});
 
 // 2. UBAH REGISTRASI SERVICE MENJADI SCOPED / TRANSIENT
 // Supaya aman berinteraksi dengan AppDbContext yang sifatnya Scoped
