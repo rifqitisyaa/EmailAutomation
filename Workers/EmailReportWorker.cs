@@ -29,7 +29,6 @@ public class EmailReportWorker : BackgroundService
         _options = options.Value;
     }
 
-    // NEW: record buat nyimpen hasil generate PDF per job
     private record JobPdfResult(ReportJobConfig Job, byte[] PdfBytes, string FileName);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -72,18 +71,15 @@ public class EmailReportWorker : BackgroundService
                         }
                     }
 
-                    // CHANGED: kumpulkan dulu semua job yang sudah waktunya
                     var jobsToRun = activeJobs
                         .Where(job => nextOccurrences.TryGetValue(job.JobName, out var nextExec) && now >= nextExec)
                         .ToList();
 
-                    // CHANGED: kalau ada yang perlu jalan, proses sekaligus (untuk grouping email)
                     if (jobsToRun.Any())
                     {
                         _logger.LogInformation("Running {Count} scheduled job(s).", jobsToRun.Count);
                         await ProcessJobGroupAsync(scope, jobsToRun, stoppingToken);
 
-                        // Update next schedule semua job yang baru jalan
                         foreach (var job in jobsToRun)
                         {
                             var cron = CronExpression.Parse(job.CronExpression);
@@ -106,7 +102,6 @@ public class EmailReportWorker : BackgroundService
         }
     }
 
-    // CHANGED: sekarang pakai ProcessJobGroupAsync
     private async Task ProcessAllJobsAsync(CancellationToken stoppingToken)
     {
         using var scope = _scopeFactory.CreateScope();
@@ -117,7 +112,6 @@ public class EmailReportWorker : BackgroundService
         await ProcessJobGroupAsync(scope, activeJobs, stoppingToken);
     }
 
-    // NEW: inti logika grouping — generate semua PDF dulu, baru group by email, baru kirim
     private async Task ProcessJobGroupAsync(
         IServiceScope scope,
         List<ReportJobConfig> jobs,
@@ -125,7 +119,6 @@ public class EmailReportWorker : BackgroundService
     {
         var results = new List<JobPdfResult>();
 
-        // Pass 1: generate PDF untuk semua job
         foreach (var job in jobs)
         {
             var result = await GeneratePdfForJobAsync(scope, job, stoppingToken);
@@ -135,7 +128,6 @@ public class EmailReportWorker : BackgroundService
 
         if (!results.Any()) return;
 
-        // Pass 2: group by recipients, kirim 1 email per group
         var grouped = results.GroupBy(r => NormalizeRecipients(r.Job));
         var emailService = scope.ServiceProvider.GetRequiredService<IEmailService>();
 
@@ -164,7 +156,6 @@ public class EmailReportWorker : BackgroundService
                 .OrderBy(e => e));
     }
 
-    // CHANGED: dulu DoWorkForJobAsync, sekarang dipecah jadi ini (hanya generate PDF, tidak kirim email)
     private async Task<JobPdfResult?> GeneratePdfForJobAsync(
         IServiceScope scope,
         ReportJobConfig job,

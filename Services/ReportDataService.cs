@@ -2,6 +2,7 @@ using EmailAutomation.Models;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
 using System.Data;
+using System.Text.Json;
 
 namespace EmailAutomation.Services;
 
@@ -17,25 +18,33 @@ public class ReportDataService : IReportDataService
     public async Task<ReportData> GetReportDataAsync(ReportJobConfig config, DateTime reportDate)
     {
         var connectionString = _configuration.GetConnectionString("DefaultConnection");
-        
-        var startYear = (reportDate.Year - 3).ToString(); // Contoh dinamis 2023
-        var endYear = reportDate.Year.ToString();        // Contoh dinamis 2026
 
         var reportData = new ReportData
         {
             ReportDate = reportDate,
             GeneratedAt = DateTime.Now,
-            ReportTitle = config.ReportTitle,
-            StartYear = startYear,
-            EndYear = endYear
+            ReportTitle = config.ReportTitle
         };
 
         using var conn = new SqlConnection(connectionString);
         using var cmd = new SqlCommand(config.SpName, conn);
         cmd.CommandType = CommandType.StoredProcedure;
-        
-        cmd.Parameters.AddWithValue("@StartDate", startYear);
-        cmd.Parameters.AddWithValue("@EndDate", endYear);
+
+        if (!string.IsNullOrEmpty(config.ParametersJson))
+        {
+            var parameters = JsonSerializer.Deserialize<Dictionary<string, string>>(config.ParametersJson);
+            if (parameters != null)
+            {
+                foreach (var param in parameters)
+                {
+                    var resolvedValue = ResolveParameterValue(param.Value, reportDate);
+                    cmd.Parameters.AddWithValue(param.Key, resolvedValue);
+
+                    if (param.Key.Contains("Start", StringComparison.OrdinalIgnoreCase)) reportData.StartYear = resolvedValue.ToString();
+                    if (param.Key.Contains("To", StringComparison.OrdinalIgnoreCase) || param.Key.Contains("End", StringComparison.OrdinalIgnoreCase)) reportData.EndYear = resolvedValue.ToString();
+                }
+            }
+        }
 
         await conn.OpenAsync();
         using var reader = await cmd.ExecuteReaderAsync();
@@ -57,5 +66,20 @@ public class ReportDataService : IReportDataService
         }
 
         return reportData;
+    }
+
+    private object ResolveParameterValue(string value, DateTime reportDate)
+    {
+        if (string.IsNullOrEmpty(value)) return value;
+
+        return value.ToLower() switch
+        {
+            "{today}" => DateTime.Now.ToString("yyyyMMdd"),
+            "{yesterday}" => DateTime.Now.AddDays(-1).ToString("yyyyMMdd"),
+            "{report_date}" => reportDate.ToString("yyyyMMdd"),
+            "{month_start}" => new DateTime(reportDate.Year, reportDate.Month, 1).ToString("yyyyMMdd"),
+            "{month_end}" => new DateTime(reportDate.Year, reportDate.Month, 1).AddMonths(1).AddDays(-1).ToString("yyyyMMdd"),
+            _ => value
+        };
     }
 }

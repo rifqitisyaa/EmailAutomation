@@ -24,6 +24,7 @@ public class ReportJobConfig
     public string CcAddresses { get; set; }
     public string Subject { get; set; } = string.Empty;
     public string Body { get; set; } = string.Empty;
+    public string? ParametersJson { get; set; }
     public bool IsActive { get; set; }
 }
 
