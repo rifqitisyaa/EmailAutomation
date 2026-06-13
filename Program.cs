@@ -69,14 +69,4 @@ catch (Exception ex)
 finally
 {
     await Log.CloseAndFlushAsync();
-    
-    Console.WriteLine("\nExecution finished. Press any key to exit...");
-    try
-    {
-        Console.ReadKey();
-    }
-    catch
-    {
-        // Fail-safe jika console tidak mendukung ReadKey
-    }
 }
