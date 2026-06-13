@@ -1,4 +1,5 @@
 using EmailAutomation.Models;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using PuppeteerSharp;
@@ -9,12 +10,14 @@ namespace EmailAutomation.Services;
 public class PdfGeneratorService : IPdfGeneratorService
 {
     private readonly EmailReportOptions _options;
+    private readonly IConfiguration _puppeter;
     private readonly ILogger<PdfGeneratorService> _logger;
 
-    public PdfGeneratorService(IOptions<EmailReportOptions> options, ILogger<PdfGeneratorService> logger)
+    public PdfGeneratorService(IOptions<EmailReportOptions> options, ILogger<PdfGeneratorService> logger, IConfiguration puppeter)
     {
         _options = options.Value;
         _logger = logger;
+        _puppeter = puppeter;
     }
 
     public async Task<byte[]> GeneratePdfAsync(string htmlContent)
@@ -22,50 +25,55 @@ public class PdfGeneratorService : IPdfGeneratorService
         try
         {
             _logger.LogInformation("Starting PDF generation process...");
-            
-            var browserFetcher = new BrowserFetcher();
-            _logger.LogInformation("Checking for Chromium updates...");
-            await browserFetcher.DownloadAsync();
 
-            await using var browser = await Puppeteer.LaunchAsync(new LaunchOptions
+            var options = new LaunchOptions
             {
-                Headless = true
-            });
-
-            await using var page = await browser.NewPageAsync();
-            await page.SetContentAsync(htmlContent);
-            await page.WaitForNetworkIdleAsync();
-
-            var pdfOptions = new PdfOptions
-            {
-                Format = PaperFormat.A4,
-                MarginOptions = new MarginOptions
-                {
-                    Top = "1cm",
-                    Bottom = "1cm",
-                    Left = "1cm",
-                    Right = "1cm"
-                },
-                PrintBackground = true
+                Headless = true,
+                ExecutablePath = _puppeter.GetValue<string>("PathPuppeteer:ExecutablePath")
             };
 
-            var pdfBytes = await page.PdfDataAsync(pdfOptions);
-            _logger.LogInformation("PDF generated successfully. Size: {Size} bytes", pdfBytes.Length);
+            _logger.LogInformation("Launching browser using local executable...");
 
-            if (!string.IsNullOrEmpty(_options.PdfOutputPath))
+            // Menggunakan browser dan page sekali saja di sini
+            using (var browser = await Puppeteer.LaunchAsync(options))
+            using (var page = await browser.NewPageAsync())
             {
-                if (!Directory.Exists(_options.PdfOutputPath))
+                await page.SetContentAsync(htmlContent);
+                await page.WaitForNetworkIdleAsync();
+
+                // Setup format kertas A4 dan Margin tetap dipertahankan di sini
+                var pdfOptions = new PdfOptions
                 {
-                    Directory.CreateDirectory(_options.PdfOutputPath);
+                    Format = PaperFormat.A4,
+                    MarginOptions = new MarginOptions
+                    {
+                        Top = "1cm",
+                        Bottom = "1cm",
+                        Left = "1cm",
+                        Right = "1cm"
+                    },
+                    PrintBackground = true
+                };
+
+                var pdfBytes = await page.PdfDataAsync(pdfOptions);
+                _logger.LogInformation("PDF generated successfully. Size: {Size} bytes", pdfBytes.Length);
+
+                // Fitur simpan backup file PDF tetap berjalan jika konfigurasinya ada
+                if (!string.IsNullOrEmpty(_options.PdfOutputPath))
+                {
+                    if (!Directory.Exists(_options.PdfOutputPath))
+                    {
+                        Directory.CreateDirectory(_options.PdfOutputPath);
+                    }
+
+                    var fileName = $"Report_{DateTime.Now:yyyyMMdd_HHmmss}.pdf";
+                    var filePath = Path.Combine(_options.PdfOutputPath, fileName);
+                    await File.WriteAllBytesAsync(filePath, pdfBytes);
+                    _logger.LogInformation("PDF backup saved to: {Path}", filePath);
                 }
 
-                var fileName = $"Report_{DateTime.Now:yyyyMMdd_HHmmss}.pdf";
-                var filePath = Path.Combine(_options.PdfOutputPath, fileName);
-                await File.WriteAllBytesAsync(filePath, pdfBytes);
-                _logger.LogInformation("PDF backup saved to: {Path}", filePath);
+                return pdfBytes;
             }
-
-            return pdfBytes;
         }
         catch (Exception ex)
         {
