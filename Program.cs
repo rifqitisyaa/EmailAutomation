@@ -51,6 +51,7 @@ builder.Services.AddScoped<IReportDataService, ReportDataService>();
 builder.Services.AddScoped<IHtmlTemplateService, HtmlTemplateService>();
 builder.Services.AddScoped<IPdfGeneratorService, PdfGeneratorService>();
 builder.Services.AddScoped<IEmailService, EmailService>();
+builder.Services.AddScoped<IPdfCompressionService, PdfCompressionService>();
 
 // Worker tetap Hosted Service (Singleton otomatis dari .NET)
 builder.Services.AddHostedService<EmailReportWorker>();
@@ -69,4 +70,17 @@ catch (Exception ex)
 finally
 {
     await Log.CloseAndFlushAsync();
+
+
+    await Log.CloseAndFlushAsync();
+
+    Console.WriteLine("\nExecution finished. Press any key to exit...");
+
+    try
+    {
+        Console.ReadKey();
+    }
+    catch
+    {
+    }
 }

@@ -44,18 +44,16 @@ public class PdfGeneratorService : IPdfGeneratorService
 
             _logger.LogInformation("Launching browser using local executable...");
 
-            // Menggunakan browser dan page sekali saja di sini
             using (var browser = await Puppeteer.LaunchAsync(options))
             using (var page = await browser.NewPageAsync())
             {
                 await page.SetContentAsync(htmlContent);
                 await page.WaitForNetworkIdleAsync();
 
-                // Setup format kertas A4 dan Margin tetap dipertahankan di sini
                 var pdfOptions = new PdfOptions
                 {
                     Format = PaperFormat.A4,
-                    Landscape = false, // Balikin ke Portrait
+                    Landscape = false,
                     MarginOptions = new MarginOptions
                     {
                         Top = "1cm",
@@ -69,7 +67,6 @@ public class PdfGeneratorService : IPdfGeneratorService
                 var pdfBytes = await page.PdfDataAsync(pdfOptions);
                 _logger.LogInformation("PDF generated successfully. Size: {Size} bytes", pdfBytes.Length);
 
-                // Fitur simpan backup file PDF tetap berjalan jika konfigurasinya ada
                 if (!string.IsNullOrEmpty(_options.PdfOutputPath))
                 {
                     if (!Directory.Exists(_options.PdfOutputPath))
