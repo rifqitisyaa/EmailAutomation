@@ -71,13 +71,14 @@ finally
 {
     await Log.CloseAndFlushAsync();
 
-    Console.WriteLine("\nExecution finished. Press any key to exit...");
+    //kalau ada error aktifkan ini supaya console tetap terbuka untuk melihat log terakhir
+    //Console.WriteLine("\nExecution finished. Press any key to exit...");
 
-    try
-    {
-        Console.ReadKey();
-    }
-    catch
-    {
-    }
+    //try
+    //{
+    //    Console.ReadKey();
+    //}
+    //catch
+    //{
+    //}
 }
