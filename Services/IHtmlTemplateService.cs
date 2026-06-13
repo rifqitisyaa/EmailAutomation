@@ -4,5 +4,5 @@ namespace EmailAutomation.Services;
 
 public interface IHtmlTemplateService
 {
-    string BuildHtml(ReportData data);
+    string BuildHtml(ReportData data, ReportJobConfig config);
 }

@@ -25,6 +25,7 @@ public class ReportJobConfig
     public string Subject { get; set; } = string.Empty;
     public string Body { get; set; } = string.Empty;
     public string? ParametersJson { get; set; }
+    public string? ShowFields { get; set; }
     public bool IsActive { get; set; }
 }
 

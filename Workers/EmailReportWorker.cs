@@ -178,7 +178,7 @@ public class EmailReportWorker : BackgroundService
                 return null;
             }
 
-            var html = htmlTemplateService.BuildHtml(reportData);
+            var html = htmlTemplateService.BuildHtml(reportData, job);
             var pdfBytes = await pdfGeneratorService.GeneratePdfAsync(html);
             var fileName = $"{job.JobName}_{reportDate:yyyyMMdd}.pdf";
 

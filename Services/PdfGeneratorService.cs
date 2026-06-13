@@ -26,10 +26,20 @@ public class PdfGeneratorService : IPdfGeneratorService
         {
             _logger.LogInformation("Starting PDF generation process...");
 
+            var configPath = _puppeter.GetValue<string>("PathPuppeter:ExecutablePath");
+            var fullPath = Path.IsPathRooted(configPath)
+                ? configPath
+                : Path.Combine(AppContext.BaseDirectory, configPath ?? string.Empty);
+
             var options = new LaunchOptions
             {
                 Headless = true,
-                ExecutablePath = _puppeter.GetValue<string>("PathPuppeteer:ExecutablePath")
+                ExecutablePath = fullPath,
+                Args = new[] {
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage"
+                }
             };
 
             _logger.LogInformation("Launching browser using local executable...");
@@ -45,6 +55,7 @@ public class PdfGeneratorService : IPdfGeneratorService
                 var pdfOptions = new PdfOptions
                 {
                     Format = PaperFormat.A4,
+                    Landscape = false, // Balikin ke Portrait
                     MarginOptions = new MarginOptions
                     {
                         Top = "1cm",
