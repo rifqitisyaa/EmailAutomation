@@ -2,6 +2,7 @@ using EmailAutomation.Data;
 using EmailAutomation.Models;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using System.Data;
 using System.Text.Json;
 using System.Text;
@@ -12,11 +13,13 @@ public class ReportDataService : IReportDataService
 {
     private readonly IConfiguration _configuration;
     private readonly AppDbContext _context;
+    private readonly ILogger<ReportDataService> _logger;
 
-    public ReportDataService(IConfiguration configuration, AppDbContext context)
+    public ReportDataService(IConfiguration configuration, AppDbContext context, ILogger<ReportDataService> logger)
     {
         _configuration = configuration;
         _context = context;
+        _logger = logger;
     }
 
     public async Task<ReportData> GetReportDataAsync(ReportJobConfig config, DateTime reportDate)
@@ -54,6 +57,8 @@ public class ReportDataService : IReportDataService
 
         try 
         {
+            _logger.LogInformation("Executing stored procedure {SpName} for job {JobName} with parameters: {Params}", config.SpName, config.JobName, paramLog.ToString());
+            
             await conn.OpenAsync();
             using var reader = await cmd.ExecuteReaderAsync();
 
@@ -73,6 +78,8 @@ public class ReportDataService : IReportDataService
                 reportData.Rows.Add(row);
             }
 
+            _logger.LogInformation("Successfully retrieved {Count} rows for job {JobName}", reportData.Rows.Count, config.JobName);
+
             // Log Success ke Database via EF Core
             _context.EmailAutomationLogs.Add(new EmailAutomationLog
             {
@@ -88,6 +95,8 @@ public class ReportDataService : IReportDataService
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "Failed to generate report data for {JobName} using SP {SpName}", config.JobName, config.SpName);
+
             // Log Error ke Database
             _context.EmailAutomationLogs.Add(new EmailAutomationLog
             {

@@ -69,4 +69,11 @@ catch (Exception ex)
 finally
 {
     await Log.CloseAndFlushAsync();
+    
+    // Cegah window langsung tertutup kalau bukan mode --run-once (atau biar user bisa baca log)
+    if (args.Contains("--run-once") || !builder.Environment.IsProduction())
+    {
+        Console.WriteLine("\nExecution finished. Press any key to exit...");
+        Console.ReadKey();
+    }
 }
