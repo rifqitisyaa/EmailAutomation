@@ -71,9 +71,6 @@ finally
 {
     await Log.CloseAndFlushAsync();
 
-
-    await Log.CloseAndFlushAsync();
-
     Console.WriteLine("\nExecution finished. Press any key to exit...");
 
     try
